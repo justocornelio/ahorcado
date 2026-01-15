@@ -11,6 +11,9 @@ import {
   EyeOff,
 } from "lucide-react";
 
+// ✅ importa tu JSON (ajusta la ruta según tu proyecto)
+import WORDS from "./words.json";
+
 type Phase = "PLAY" | "WON" | "LOST";
 
 type WordItem = {
@@ -19,56 +22,61 @@ type WordItem = {
   category: string;
 };
 
-const WORDS: WordItem[] = [
-  // Cortas 4–7 letras (sin tildes)
-  { word: "CASA", hint: "Lugar donde vives", category: "Objetos" },
-  { word: "MESA", hint: "Tiene patas", category: "Objetos" },
-  { word: "SILLA", hint: "Para sentarse", category: "Objetos" },
-  { word: "LLAVE", hint: "Abre puertas", category: "Objetos" },
-  { word: "VASO", hint: "Para beber", category: "Objetos" },
-
-  { word: "PERRO", hint: "Mejor amigo", category: "Animales" },
-  { word: "GATO", hint: "Le gusta dormir", category: "Animales" },
-  { word: "RANA", hint: "Salta y croa", category: "Animales" },
-  { word: "PATO", hint: "Dice cuac", category: "Animales" },
-  { word: "LEON", hint: "Rey de la selva", category: "Animales" },
-
-  { word: "AZUL", hint: "Color del cielo", category: "Colores" },
-  { word: "ROJO", hint: "Color intenso", category: "Colores" },
-  { word: "VERDE", hint: "Color de plantas", category: "Colores" },
-  { word: "NEGRO", hint: "Oscuro", category: "Colores" },
-  { word: "BLANCO", hint: "Como la nieve", category: "Colores" },
-
-  { word: "PLAYA", hint: "Arena y mar", category: "Lugares" },
-  { word: "MONTE", hint: "Montana pequeña", category: "Lugares" },
-  { word: "BOSQUE", hint: "Muchos arboles", category: "Lugares" },
-  { word: "RIO", hint: "Agua que corre", category: "Lugares" },
-  { word: "CALLE", hint: "Por donde pasan carros", category: "Lugares" },
-
-  { word: "PAN", hint: "Se come", category: "Comida" },
-  { word: "ARROZ", hint: "Muy común", category: "Comida" },
-  { word: "PIZZA", hint: "Con queso", category: "Comida" },
-  { word: "PASTA", hint: "Con salsa", category: "Comida" },
-  { word: "MANGO", hint: "Fruta tropical", category: "Comida" },
-
-  { word: "LUZ", hint: "No es oscuridad", category: "Conceptos" },
-  { word: "TIEMPO", hint: "Pasa siempre", category: "Conceptos" },
-  { word: "SUERTE", hint: "A veces ayuda", category: "Conceptos" },
-];
-
 const ALPHABET = "ABCDEFGHIJKLMNÑOPQRSTUVWXYZ".split("");
-
-function pickWord(exclude?: string) {
-  const pool = exclude ? WORDS.filter((w) => w.word !== exclude) : WORDS;
-  return pool[Math.floor(Math.random() * pool.length)];
-}
 
 function uniqueLetters(word: string) {
   return Array.from(new Set(word.split("")));
 }
 
+// Función para obtener un índice aleatorio
+function getRandomIndex(excludeIndex?: number): number {
+  let newIndex;
+  do {
+    newIndex = Math.floor(Math.random() * WORDS.length);
+  } while (newIndex === excludeIndex && WORDS.length > 1);
+  return newIndex;
+}
+
+// Función para mezclar un array (Fisher-Yates shuffle)
+function shuffleArray<T>(array: T[]): T[] {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
 export default function Home() {
-  const [item, setItem] = useState<WordItem>(() => pickWord());
+  // ====== estado para preguntas aleatorias ======
+  const [randomIndices, setRandomIndices] = useState<number[]>([]);
+  const [currentIndexPos, setCurrentIndexPos] = useState(0);
+  const [usedWords, setUsedWords] = useState<Set<number>>(new Set());
+
+  // Inicializar índices aleatorios al montar
+  useEffect(() => {
+    const shuffled = shuffleArray(Array.from({ length: WORDS.length }, (_, i) => i));
+    setRandomIndices(shuffled);
+  }, []);
+
+  // Obtener el índice actual basado en posición aleatoria
+  const currentIndex = useMemo(() => {
+    if (randomIndices.length === 0) return 0;
+    return randomIndices[currentIndexPos];
+  }, [randomIndices, currentIndexPos]);
+
+  // normaliza por si el json tiene minúsculas o espacios
+  const currentItem: WordItem = useMemo(() => {
+    if (WORDS.length === 0) {
+      return { word: "", hint: "", category: "" };
+    }
+    const raw = (WORDS as WordItem[])[currentIndex];
+    return {
+      ...raw,
+      word: raw.word.trim().toUpperCase(),
+    };
+  }, [currentIndex]);
+
   const [guessed, setGuessed] = useState<Set<string>>(new Set());
   const [wrong, setWrong] = useState<Set<string>>(new Set());
   const [phase, setPhase] = useState<Phase>("PLAY");
@@ -80,10 +88,11 @@ export default function Home() {
   const [revealHint, setRevealHint] = useState(true);
   const [toast, setToast] = useState<string | null>(null);
 
-  const word = item.word;
+  const word = currentItem.word;
   const lettersNeeded = useMemo(() => uniqueLetters(word), [word]);
 
   const toastRef = useRef<number | null>(null);
+  const nextTimerRef = useRef<number | null>(null);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -106,10 +115,80 @@ export default function Home() {
 
   const canPlay = phase === "PLAY";
 
+  // ✅ Función para obtener la siguiente palabra aleatoria
+  const getNextRandomWord = () => {
+    if (randomIndices.length === 0) return;
+    
+    // Marcar la palabra actual como usada
+    setUsedWords(prev => {
+      const next = new Set(prev);
+      next.add(currentIndex);
+      return next;
+    });
+    
+    // Buscar la siguiente posición
+    let nextPos = (currentIndexPos + 1) % randomIndices.length;
+    
+    // Si hemos usado todas las palabras, resetear
+    if (usedWords.size >= randomIndices.length) {
+      // Mezclar de nuevo todos los índices
+      const reshuffled = shuffleArray(Array.from({ length: WORDS.length }, (_, i) => i));
+      setRandomIndices(reshuffled);
+      setUsedWords(new Set());
+      nextPos = 0;
+      showToast("¡Todas las palabras usadas! Reiniciando...");
+    }
+    
+    setCurrentIndexPos(nextPos);
+  };
+
+  // ✅ pasar al siguiente reto (automático)
+  const goNextChallenge = () => {
+    // limpieza por si había timer previo
+    if (nextTimerRef.current) window.clearTimeout(nextTimerRef.current);
+
+    // delay corto para que se note el "GANASTE"
+    nextTimerRef.current = window.setTimeout(() => {
+      getNextRandomWord();
+      setGuessed(new Set());
+      setWrong(new Set());
+      setLives(6);
+      setPhase("PLAY");
+      showToast("Siguiente reto");
+    }, 800);
+  };
+
+  const restartAll = () => {
+    if (nextTimerRef.current) window.clearTimeout(nextTimerRef.current);
+    
+    // Mezclar todos los índices de nuevo
+    const shuffled = shuffleArray(Array.from({ length: WORDS.length }, (_, i) => i));
+    setRandomIndices(shuffled);
+    setCurrentIndexPos(0);
+    setUsedWords(new Set());
+    
+    setGuessed(new Set());
+    setWrong(new Set());
+    setLives(6);
+    setPhase("PLAY");
+    setStreak(0);
+    setScore(0);
+    showToast("Reiniciado con orden aleatorio");
+  };
+
+  const restartCurrent = () => {
+    if (nextTimerRef.current) window.clearTimeout(nextTimerRef.current);
+    setGuessed(new Set());
+    setWrong(new Set());
+    setLives(6);
+    setPhase("PLAY");
+    setStreak(0); // si quieres que NO se pierda la racha aquí, quita esta línea
+    showToast("Reintento");
+  };
+
   const applyGuess = (raw: string) => {
     if (!canPlay) return;
     const letter = raw.toUpperCase();
-
     if (!ALPHABET.includes(letter)) return;
 
     if (guessed.has(letter) || wrong.has(letter)) {
@@ -125,6 +204,7 @@ export default function Home() {
       const win = lettersNeeded.every((c) => next.has(c));
       if (win) {
         setPhase("WON");
+
         const nextStreak = streak + 1;
         setStreak(nextStreak);
 
@@ -135,6 +215,9 @@ export default function Home() {
 
         setScore((s) => s + add);
         showToast(`¡Bien! +${add}`);
+
+        // ✅ avanza automáticamente al siguiente reto
+        goNextChallenge();
       } else {
         showToast("Correcto");
       }
@@ -157,40 +240,25 @@ export default function Home() {
     }
   };
 
-  const nextWord = () => {
-    const nw = pickWord(word);
-    setItem(nw);
-    setGuessed(new Set());
-    setWrong(new Set());
-    setLives(6);
-    setPhase("PLAY");
-    showToast("Nueva palabra");
-  };
-
-  const restartAll = () => {
-    const nw = pickWord();
-    setItem(nw);
-    setGuessed(new Set());
-    setWrong(new Set());
-    setLives(6);
-    setPhase("PLAY");
-    setStreak(0);
-    setScore(0);
-    showToast("Reiniciado");
-  };
-
   // Teclado físico
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!canPlay) return;
       const key = e.key.toUpperCase();
-      // soporte Ñ: en teclado puede llegar como "Ñ" o como ";" según layout, pero aquí mantenemos simple
       if (key.length === 1) applyGuess(key);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canPlay, guessed, wrong, lives, phase, word]);
+
+  // Limpieza timers al desmontar
+  useEffect(() => {
+    return () => {
+      if (toastRef.current) window.clearTimeout(toastRef.current);
+      if (nextTimerRef.current) window.clearTimeout(nextTimerRef.current);
+    };
+  }, []);
 
   // ===== Diseño estilo "pizarra minimal" =====
   const bannerTone =
@@ -200,9 +268,12 @@ export default function Home() {
       ? "border-rose-200 bg-rose-50 text-rose-900"
       : "border-slate-200 bg-slate-50 text-slate-800";
 
+  const totalChallenges = (WORDS as WordItem[]).length;
+  const currentNumber = currentIndexPos + 1;
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 overflow-hidden">
-      {/* Banda superior (diferente a tarjetas) */}
+      {/* Banda superior */}
       <div className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
           <div className="flex items-center gap-3">
@@ -211,17 +282,19 @@ export default function Home() {
             </div>
             <div>
               <h1 className="text-base">Ahorcado minimal</h1>
-              <p className="text-xs text-slate-500">Palabras cortas • sin ruido</p>
+              <p className="text-xs text-slate-500">
+                Reto {currentNumber}/{totalChallenges} • Orden aleatorio
+              </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <button
-              onClick={nextWord}
+              onClick={goNextChallenge}
               className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700"
             >
               <RefreshCw size={16} />
-              Otra
+              Siguiente
             </button>
             <button
               onClick={restartAll}
@@ -236,7 +309,7 @@ export default function Home() {
 
       <main className="mx-auto max-w-5xl px-4 py-6">
         <div className="grid gap-4 lg:grid-cols-3">
-          {/* Panel izquierdo tipo “ficha” */}
+          {/* Panel izquierdo */}
           <section className="rounded-2xl bg-white border border-slate-200 p-4 lg:col-span-1">
             <div className="flex items-center justify-between">
               <span className="text-sm text-slate-700">Estado</span>
@@ -282,7 +355,7 @@ export default function Home() {
             <div className="mt-3 rounded-2xl border border-slate-200 bg-white p-3">
               <div className="flex items-center justify-between">
                 <div className="text-xs text-slate-500">Categoría</div>
-                <div className="text-xs text-slate-700">{item.category}</div>
+                <div className="text-xs text-slate-700">{currentItem.category}</div>
               </div>
 
               <div className="mt-2 flex items-center justify-between">
@@ -297,7 +370,7 @@ export default function Home() {
               </div>
 
               {revealHint && (
-                <div className="mt-2 text-sm text-slate-700">{item.hint}</div>
+                <div className="mt-2 text-sm text-slate-700">{currentItem.hint}</div>
               )}
             </div>
 
@@ -314,11 +387,27 @@ export default function Home() {
                 )}
               </div>
             )}
+
+            {phase === "LOST" && (
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={restartCurrent}
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
+                >
+                  Reintentar
+                </button>
+                <button
+                  onClick={goNextChallenge}
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  Siguiente
+                </button>
+              </div>
+            )}
           </section>
 
-          {/* Área principal estilo “pizarra” (bien distinta) */}
+          {/* Área principal */}
           <section className="rounded-2xl border border-slate-200 bg-white p-4 lg:col-span-2">
-            {/* “Pizarra” */}
             <div className="rounded-2xl border border-slate-200 bg-slate-900 p-4 text-slate-50">
               <div className="flex items-center justify-between">
                 <div className="text-xs text-slate-300">Adivina la palabra</div>
@@ -344,13 +433,10 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Teclado */}
             <div className="mt-4">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-sm text-slate-700">Elige una letra</span>
-                {toast && (
-                  <span className="text-xs text-slate-500 transition-opacity">{toast}</span>
-                )}
+                {toast && <span className="text-xs text-slate-500">{toast}</span>}
               </div>
 
               <div className="grid grid-cols-9 gap-2 sm:grid-cols-10 md:grid-cols-11">
@@ -386,11 +472,11 @@ export default function Home() {
 
               <div className="mt-4 flex flex-wrap gap-2">
                 <button
-                  onClick={nextWord}
+                  onClick={goNextChallenge}
                   className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700"
                 >
                   <RefreshCw size={16} />
-                  Nueva palabra
+                  Siguiente reto
                 </button>
 
                 <button
@@ -406,7 +492,7 @@ export default function Home() {
         </div>
 
         <footer className="mt-6 text-center text-xs text-slate-500">
-          Tip: puedes usar el teclado físico (A–Z, Ñ).
+          Tip: puedes usar el teclado físico (A–Z, Ñ). Las palabras aparecen en orden aleatorio para evitar memorización.
         </footer>
       </main>
     </div>
